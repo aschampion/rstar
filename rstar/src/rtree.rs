@@ -611,6 +611,14 @@ where
         }
     }
 
+    /// TODO
+    pub fn all_nearest_neighbors<'a, P2: RTreeParams>(
+        &'a self,
+        query_tree: &'a RTree<T, P2>,
+    ) -> impl Iterator<Item=nearest_neighbor::NearestNeighbors<'a, 'a, T>> {
+        nearest_neighbor::all_nearest_neighbors(&self.root, query_tree.root())
+    }
+
     /// Returns all elements of the tree within a certain distance.
     ///
     /// The elements may be returned in any order. Each returned element

@@ -1,4 +1,4 @@
-use crate::point::{max_inline, Point, PointExt};
+use crate::point::{max_inline, min_inline, Point, PointExt};
 use crate::{Envelope, RTreeObject};
 use num_traits::{Bounded, One, Zero};
 
@@ -94,6 +94,17 @@ where
             self.min_point(point).sub(point).length_2()
         }
     }
+
+    fn corners(&self, other: &Self, corner: P, i: usize) -> P::Scalar {
+        if i == P::DIMENSIONS {
+            return other.min_max_dist_2(&corner);
+        }
+        let mut pair = corner.clone();
+        *pair.nth_mut(i) = self.upper.nth(i);
+        return max_inline(
+            self.corners(other, corner, i + 1),
+            self.corners(other, pair, i + 1));
+    }
 }
 
 impl<P> Envelope for AABB<P>
@@ -142,6 +153,21 @@ where
 
     fn distance_2(&self, point: &P) -> P::Scalar {
         self.distance_2(point)
+    }
+
+    fn min_dist_2(&self, other: &Self) -> P::Scalar {
+        let l = self.min_point(&other.lower);
+        let u = self.min_point(&other.upper);
+        min_inline(other.distance_2(&l), other.distance_2(&u))
+    }
+
+    fn max_dist_2(&self, other: &Self) -> P::Scalar { // FIXME
+        // let merged = self.merged(other);
+        // let diag = merged.upper.sub(&merged.lower);
+        // diag.length_2()
+        
+        let corner = self.lower.clone();
+        self.corners(other, corner, 0)
     }
 
     fn min_max_dist_2(&self, point: &P) -> <P as Point>::Scalar {

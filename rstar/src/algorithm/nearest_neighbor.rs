@@ -183,16 +183,26 @@ pub fn nearest_neighbor<'a, T>(
 where
     T: PointDistance,
 {
+    nearest_neighbor_inner(&node.children, query_point).map(|(node, _)| node)
+}
+    
+fn nearest_neighbor_inner<'a, T>(
+    seed_nodes: impl IntoIterator<Item = impl std::borrow::Borrow<&'a RTreeNode<T>>>,
+    query_point: <T::Envelope as Envelope>::Point,
+) -> Option<(&'a T, <<T::Envelope as Envelope>::Point as Point>::Scalar)>
+where
+    T: PointDistance,
+{
     fn extend_heap<'a, T>(
         nodes: &mut SmallHeap<RTreeNodeDistanceWrapper<'a, T>>,
-        node: &'a ParentNode<T>,
+        source: impl IntoIterator<Item = impl std::borrow::Borrow<&'a RTreeNode<T>>>,
         query_point: <T::Envelope as Envelope>::Point,
         min_max_distance: &mut <<T::Envelope as Envelope>::Point as Point>::Scalar,
     ) where
         T: PointDistance + 'a,
     {
-        for child in &node.children {
-            let distance_if_less_or_equal = match child {
+        for child in source {
+            let distance_if_less_or_equal = match child.borrow() {
                 RTreeNode::Parent(ref data) => {
                     let distance = data.envelope.distance_2(&query_point);
                     if distance <= *min_max_distance {
@@ -208,10 +218,10 @@ where
             if let Some(distance) = distance_if_less_or_equal {
                 *min_max_distance = min_inline(
                     *min_max_distance,
-                    child.envelope().min_max_dist_2(&query_point),
+                    child.borrow().envelope().min_max_dist_2(&query_point),
                 );
                 nodes.push(RTreeNodeDistanceWrapper {
-                    node: child,
+                    node: child.borrow(),
                     distance,
                 });
             }
@@ -222,24 +232,161 @@ where
     let mut smallest_min_max: <<T::Envelope as Envelope>::Point as Point>::Scalar =
         Bounded::max_value();
     let mut nodes = SmallHeap::new();
-    extend_heap(&mut nodes, node, query_point, &mut smallest_min_max);
+    extend_heap(&mut nodes, seed_nodes, query_point, &mut smallest_min_max);
     while let Some(current) = nodes.pop() {
         match current {
             RTreeNodeDistanceWrapper {
                 node: RTreeNode::Parent(ref data),
                 ..
             } => {
-                extend_heap(&mut nodes, data, query_point, &mut smallest_min_max);
+                extend_heap(&mut nodes, &data.children, query_point, &mut smallest_min_max);
             }
             RTreeNodeDistanceWrapper {
                 node: RTreeNode::Leaf(ref t),
-                ..
+                distance
             } => {
-                return Some(t);
+                return Some((t, distance));
             }
         }
     }
     None
+}
+
+const PRELOAD_SIZE: usize = 16;
+
+pub struct NearestNeighbors<'a, 'b, T: PointDistance> {
+    pub target: &'a T,
+    pub query: &'b T,
+    pub distance: <<T::Envelope as Envelope>::Point as Point>::Scalar,
+}
+
+pub fn all_nearest_neighbors<'a, T>(
+    target_node: &'a ParentNode<T>,
+    query_node: &'a ParentNode<T>,
+) -> impl Iterator<Item=NearestNeighbors<'a, 'a, T>> + 'a 
+where
+    T: PointDistance + 'a,
+{
+    AllNearestNeighborsIterator::new(target_node, query_node)
+}
+
+
+pub struct AllNearestNeighborsIterator<'a, T>
+where
+    T: PointDistance + 'a,
+{
+    stack: Vec<NeighborSubtrees<'a, T>>,
+    queue: Vec<(&'a RTreeNode<T>, usize)>,
+}
+
+impl<'a, T> AllNearestNeighborsIterator<'a, T>
+where
+    T: PointDistance + 'a,
+{
+    fn new(
+        target_node: &'a ParentNode<T>,
+        query_node: &'a ParentNode<T>,
+    ) -> Self {
+        Self {
+            stack: vec![NeighborSubtrees::root(target_node, query_node)],
+            queue: query_node.children.iter().map(|child| (child, 0)).collect(),
+        }
+    }
+}
+
+impl<'a, T> Iterator for AllNearestNeighborsIterator<'a, T>
+where
+    T: PointDistance,
+{
+    type Item = NearestNeighbors<'a, 'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((node, depth)) = self.queue.pop() {
+            self.stack.truncate(depth + 1);
+            // dbg!(depth);
+            match node {
+                RTreeNode::Parent(ref node) => {
+                    let subtrees = self.stack.last().unwrap();
+                    let child_subtrees = subtrees.child_subtrees(node);
+                    self.stack.push(child_subtrees);
+                    self.queue.extend(node.children().iter().map(|child| (child, depth + 1)));
+                },
+                RTreeNode::Leaf(ref leaf) => {
+                    let subtrees = self.stack.last().unwrap();
+                    // dbg!(subtrees.target_nodes.len());
+                    return nearest_neighbor_inner(
+                        &subtrees.target_nodes,
+                        leaf.envelope().center() // FIXME
+                    ).map(|(target, distance)| NearestNeighbors {
+                        query: leaf,
+                        target,
+                        distance
+                    })
+                }
+            }
+        }
+        
+        None
+    }
+}
+
+
+struct NeighborSubtrees<'a, T>
+where
+    T: PointDistance + 'a
+{
+    target_nodes: Vec<&'a RTreeNode<T>>,
+    query_node: &'a ParentNode<T>,
+}
+
+impl<'a, T> NeighborSubtrees<'a, T>
+where
+    T: PointDistance + 'a,
+{
+    fn root(
+        target_node: &'a ParentNode<T>,
+        query_node: &'a ParentNode<T>,
+    ) -> Self {
+        let target_nodes = target_node.children().iter().collect();
+        Self {
+            target_nodes,
+            query_node,
+        }
+    }
+
+    fn child_subtrees(
+        &self,
+        child_node: &'a ParentNode<T>,
+    ) -> NeighborSubtrees<'a, T> {
+        let mut target_nodes: Vec<&'a RTreeNode<T>> = if self.target_nodes.len() < PRELOAD_SIZE {
+            let mut target_nodes = Vec::with_capacity(PRELOAD_SIZE);
+            self.target_nodes.iter().for_each(|node| {
+                match *node {
+                    RTreeNode::Parent(ref parent) => target_nodes.extend(&parent.children),
+                    leaf @ RTreeNode::Leaf(..) => target_nodes.push(leaf),
+                }
+            });
+            target_nodes
+        } else {
+            self.target_nodes.clone()
+        };
+        let min_max_dist = target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
+            let dist = node.envelope().max_dist_2(&child_node.envelope);
+            min_inline(min_max_dist, dist)
+        });
+        // dbg!(min_max_dist);
+        target_nodes.retain(|node| {
+                let distance = node.envelope().min_dist_2(&child_node.envelope);
+                // dbg!(distance);
+                distance <= min_max_dist
+            });
+        // dbg!(self.target_nodes.len() - target_nodes.len());
+        
+        NeighborSubtrees {
+            target_nodes,
+            query_node: child_node,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +419,32 @@ mod test {
                 }
             }
             assert_eq!(nearest, tree.nearest_neighbor(sample_point));
+        }
+    }
+
+    #[test]
+    fn test_all_nearest_neighbors() {
+        let points = create_random_points(1_000, SEED_1);
+        let tree = RTree::bulk_load(points.clone());
+
+        let mut tree_sequential = RTree::new();
+        for point in &points {
+            tree_sequential.insert(*point);
+        }
+        
+        for neighbors in super::all_nearest_neighbors(tree.root(), tree_sequential.root()) {
+            assert_eq!(neighbors.query, neighbors.target);
+            assert_eq!(neighbors.distance, 0.0);
+        }
+
+        assert_eq!(super::all_nearest_neighbors(tree.root(), tree_sequential.root()).count(), points.len());
+
+
+        let sample_points = create_random_points(100, SEED_2);
+        let sample_tree = RTree::bulk_load(sample_points.clone());
+        for neighbors in super::all_nearest_neighbors(tree.root(), sample_tree.root()) {
+            let single_neighbor = tree.nearest_neighbor(neighbors.query);
+            assert_eq!(Some(neighbors.target), single_neighbor);
         }
     }
 

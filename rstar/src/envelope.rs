@@ -34,6 +34,12 @@ pub trait Envelope: Clone + Copy + PartialEq + ::std::fmt::Debug {
 
     /// Returns the euclidean distance to the envelope's border.
     fn distance_2(&self, point: &Self::Point) -> <Self::Point as Point>::Scalar;
+    
+    /// TODO
+    fn min_dist_2(&self, other: &Self) -> <Self::Point as Point>::Scalar;
+    
+    /// TODO
+    fn max_dist_2(&self, other: &Self) -> <Self::Point as Point>::Scalar;
 
     /// Returns the squared min-max distance, a concept that helps to find nearest neighbors efficiently.
     ///
