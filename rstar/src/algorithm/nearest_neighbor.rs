@@ -302,17 +302,21 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, depth)) = self.queue.pop() {
-            self.stack.truncate(depth + 1);
+            // self.stack.truncate(depth + 1);
             // dbg!(depth);
             match node {
                 RTreeNode::Parent(ref node) => {
-                    let subtrees = self.stack.last().unwrap();
-                    let child_subtrees = subtrees.child_subtrees(node);
-                    self.stack.push(child_subtrees);
+                    if self.stack.len() < depth + 2 {
+                        self.stack.push(NeighborSubtrees::empty());
+                    }
+                    let pair = &mut self.stack[depth..depth+2];
+                    let (parent, child) = pair.split_at_mut(1);
+                    child[0].child_subtrees(&parent[0], node);
+                    // self.stack.push(child_subtrees);
                     self.queue.extend(node.children().iter().map(|child| (child, depth + 1)));
                 },
                 RTreeNode::Leaf(ref leaf) => {
-                    let subtrees = self.stack.last().unwrap();
+                    let subtrees = &self.stack[depth];
                     // dbg!(subtrees.target_nodes.len());
                     return nearest_neighbor_inner(
                         &subtrees.target_nodes,
@@ -336,13 +340,18 @@ where
     T: PointDistance + 'a
 {
     target_nodes: Vec<&'a RTreeNode<T>>,
-    query_node: &'a ParentNode<T>,
 }
 
 impl<'a, T> NeighborSubtrees<'a, T>
 where
     T: PointDistance + 'a,
 {
+    fn empty() -> Self {
+        Self {
+            target_nodes: vec![]
+        }
+    }
+
     fn root(
         target_node: &'a ParentNode<T>,
         query_node: &'a ParentNode<T>,
@@ -350,42 +359,36 @@ where
         let target_nodes = target_node.children().iter().collect();
         Self {
             target_nodes,
-            query_node,
         }
     }
 
     fn child_subtrees(
-        &self,
+        &mut self,
+        parent: &Self,
         child_node: &'a ParentNode<T>,
-    ) -> NeighborSubtrees<'a, T> {
-        let mut target_nodes: Vec<&'a RTreeNode<T>> = if self.target_nodes.len() < PRELOAD_SIZE {
-            let mut target_nodes = Vec::with_capacity(PRELOAD_SIZE);
-            self.target_nodes.iter().for_each(|node| {
+    ) {
+        self.target_nodes.clear();
+        if parent.target_nodes.len() < PRELOAD_SIZE {
+            parent.target_nodes.iter().for_each(|node| {
                 match *node {
-                    RTreeNode::Parent(ref parent) => target_nodes.extend(&parent.children),
-                    leaf @ RTreeNode::Leaf(..) => target_nodes.push(leaf),
+                    RTreeNode::Parent(ref parent) => self.target_nodes.extend(&parent.children),
+                    leaf @ RTreeNode::Leaf(..) => self.target_nodes.push(leaf),
                 }
             });
-            target_nodes
         } else {
-            self.target_nodes.clone()
+            self.target_nodes.extend(&parent.target_nodes);
         };
-        let min_max_dist = target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
+        let min_max_dist = self.target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
             let dist = node.envelope().max_dist_2(&child_node.envelope);
             min_inline(min_max_dist, dist)
         });
         // dbg!(min_max_dist);
-        target_nodes.retain(|node| {
+        self.target_nodes.retain(|node| {
                 let distance = node.envelope().min_dist_2(&child_node.envelope);
                 // dbg!(distance);
                 distance <= min_max_dist
             });
         // dbg!(self.target_nodes.len() - target_nodes.len());
-        
-        NeighborSubtrees {
-            target_nodes,
-            query_node: child_node,
-        }
     }
 }
 
