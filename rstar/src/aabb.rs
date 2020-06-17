@@ -161,15 +161,6 @@ where
         min_inline(other.distance_2(&l), other.distance_2(&u))
     }
 
-    fn max_dist_2(&self, other: &Self) -> P::Scalar { // FIXME
-        // let merged = self.merged(other);
-        // let diag = merged.upper.sub(&merged.lower);
-        // diag.length_2()
-        
-        let corner = self.lower.clone();
-        self.corners(other, corner, 0)
-    }
-
     fn min_max_dist_2(&self, point: &P) -> <P as Point>::Scalar {
         let l = self.lower.sub(point);
         let u = self.upper.sub(point);
@@ -193,6 +184,15 @@ where
         }
 
         result - max_diff
+    }
+
+    fn max_min_max_dist_2(&self, other: &Self) -> P::Scalar { // FIXME
+        // let merged = self.merged(other);
+        // let diag = merged.upper.sub(&merged.lower);
+        // diag.length_2()
+
+        let corner = self.lower.clone();
+        self.corners(other, corner, 0)
     }
 
     fn center(&self) -> Self::Point {

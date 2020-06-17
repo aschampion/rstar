@@ -254,12 +254,20 @@ where
 
 const PRELOAD_SIZE: usize = 16;
 
+/// A nearest neighbor pair with the squared euclidean distance between them.
 pub struct NearestNeighbors<'a, 'b, T: PointDistance> {
+    /// The nearest neighbor found to `query`'s location.
     pub target: &'a T,
+    /// The node whose location was used for the query.
     pub query: &'b T,
-    pub distance: <<T::Envelope as Envelope>::Point as Point>::Scalar,
+    /// Squared euclidean distance between the nodes.
+    pub distance_2: <<T::Envelope as Envelope>::Point as Point>::Scalar,
 }
 
+/// Yield an iterator over nearest neighbors between a pair of trees.
+///
+/// Note this is note symmetric. Neighbors are found in `target_node`'s tree for
+/// each node in `query_node`'s tree.
 pub fn all_nearest_neighbors<'a, T>(
     target_node: &'a ParentNode<T>,
     query_node: &'a ParentNode<T>,
@@ -275,7 +283,11 @@ pub struct AllNearestNeighborsIterator<'a, T>
 where
     T: PointDistance + 'a,
 {
+    /// Stack of subtrees of the target tree that are candidate nearest nodes
+    /// for each depth of the current location in the query tree.
     stack: Vec<NeighborSubtrees<'a, T>>,
+    /// Queue of query nodes whose nearest neighbors or neighest neighbor covering
+    /// subtrees are to be found.
     queue: Vec<(&'a RTreeNode<T>, usize)>,
 }
 
@@ -301,30 +313,36 @@ where
     type Item = NearestNeighbors<'a, 'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // Fetch the next query node from the queue.
         while let Some((node, depth)) = self.queue.pop() {
-            // self.stack.truncate(depth + 1);
-            // dbg!(depth);
             match node {
                 RTreeNode::Parent(ref node) => {
+                    // If a cached subtrees struct to hold the child subtrees
+                    // doesn't already exist, create it.
                     if self.stack.len() < depth + 2 {
                         self.stack.push(NeighborSubtrees::empty());
                     }
                     let pair = &mut self.stack[depth..depth+2];
                     let (parent, child) = pair.split_at_mut(1);
                     child[0].child_subtrees(&parent[0], node);
-                    // self.stack.push(child_subtrees);
+
+                    // Add children of the query node to the query queue.
                     self.queue.extend(node.children().iter().map(|child| (child, depth + 1)));
                 },
                 RTreeNode::Leaf(ref leaf) => {
+                    // Find the nearest neighbor for `leaf`. The stack at the
+                    // node's depth contains subtrees of the target tree that
+                    // cover any potential nearest neighbor matches.
                     let subtrees = &self.stack[depth];
-                    // dbg!(subtrees.target_nodes.len());
+
                     return nearest_neighbor_inner(
                         &subtrees.target_nodes,
-                        leaf.envelope().center() // FIXME
-                    ).map(|(target, distance)| NearestNeighbors {
+                        // FIXME: inelegant solution to recover leaf's point.
+                        leaf.envelope().center()
+                    ).map(|(target, distance_2)| NearestNeighbors {
                         query: leaf,
                         target,
-                        distance
+                        distance_2
                     })
                 }
             }
@@ -339,6 +357,8 @@ struct NeighborSubtrees<'a, T>
 where
     T: PointDistance + 'a
 {
+    /// Nodes comprising a subtree of the target tree that cover all potential
+    /// neighest neighbor matches.
     target_nodes: Vec<&'a RTreeNode<T>>,
 }
 
@@ -357,18 +377,27 @@ where
         query_node: &'a ParentNode<T>,
     ) -> Self {
         let target_nodes = target_node.children().iter().collect();
-        Self {
+        let preroot = Self {
             target_nodes,
-        }
+        };
+        let mut root = Self::empty();
+        root.child_subtrees(&preroot, query_node);
+        root
     }
 
+    /// Replace the contents of this subtree with subtrees of `parent`'s target
+    /// subtrees that are guaranteed to cover any nearest neighbor queries from
+    /// `query_node`.
     fn child_subtrees(
         &mut self,
         parent: &Self,
-        child_node: &'a ParentNode<T>,
+        query_node: &'a ParentNode<T>,
     ) {
         self.target_nodes.clear();
         if parent.target_nodes.len() < PRELOAD_SIZE {
+            // If the set of target subtrees is not too large, subdivide each
+            // subtree into its children so they can be individually pruned
+            // by distance to the query.
             parent.target_nodes.iter().for_each(|node| {
                 match *node {
                     RTreeNode::Parent(ref parent) => self.target_nodes.extend(&parent.children),
@@ -376,19 +405,25 @@ where
                 }
             });
         } else {
+            // If the set of target subtrees is already large, retain it rather
+            // than further subdividing.
             self.target_nodes.extend(&parent.target_nodes);
         };
+
+        // For each target subtree, find the distance which guarantees any
+        // potential elements in the query node's envelope have a match with
+        // the target subtree's envelope. Find the minimal such distance.
         let min_max_dist = self.target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
-            let dist = node.envelope().max_dist_2(&child_node.envelope);
+            let dist = node.envelope().max_min_max_dist_2(&query_node.envelope);
             min_inline(min_max_dist, dist)
         });
-        // dbg!(min_max_dist);
+
+        // Only retain subtrees that potentially have a match with the query
+        // node nearer than the min max distance computed above.
         self.target_nodes.retain(|node| {
-                let distance = node.envelope().min_dist_2(&child_node.envelope);
-                // dbg!(distance);
-                distance <= min_max_dist
-            });
-        // dbg!(self.target_nodes.len() - target_nodes.len());
+            let distance = node.envelope().min_dist_2(&query_node.envelope);
+            distance <= min_max_dist
+        });
     }
 }
 
@@ -437,7 +472,7 @@ mod test {
         
         for neighbors in super::all_nearest_neighbors(tree.root(), tree_sequential.root()) {
             assert_eq!(neighbors.query, neighbors.target);
-            assert_eq!(neighbors.distance, 0.0);
+            assert_eq!(neighbors.distance_2, 0.0);
         }
 
         assert_eq!(super::all_nearest_neighbors(tree.root(), tree_sequential.root()).count(), points.len());
