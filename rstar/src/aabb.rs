@@ -95,15 +95,62 @@ where
         }
     }
 
-    fn corners(&self, other: &Self, corner: P, i: usize) -> P::Scalar {
-        if i == P::DIMENSIONS {
-            return other.min_max_dist_2(&corner);
+    /// Return an iterator over each corner vertex of the AABB.
+    ///
+    /// # Example
+    /// ```
+    /// use rstar::AABB;
+    ///
+    /// let aabb = AABB::from_corners([1.0, 2.0], [3.0, 4.0]);
+    /// let mut corners = aabb.iter_corners();
+    /// assert_eq!(corners.next(), Some([1.0, 2.0]));
+    /// assert_eq!(corners.next(), Some([3.0, 2.0]));
+    /// assert_eq!(corners.next(), Some([1.0, 4.0]));
+    /// assert_eq!(corners.next(), Some([3.0, 4.0]));
+    /// assert_eq!(corners.next(), None);
+    /// ```
+    pub fn iter_corners(&self) -> impl Iterator<Item=P> {
+        CornerIterator::new(self)
+    }
+}
+
+struct CornerIterator<P: Point> {
+    lower: P,
+    upper: P,
+    idx: usize,
+}
+
+impl<P> CornerIterator<P>
+where
+    P: Point,
+{
+    fn new(aabb: &AABB<P>) -> Self {
+        Self {
+            lower: aabb.lower,
+            upper: aabb.upper,
+            idx: 0,
         }
-        let mut pair = corner.clone();
-        *pair.nth_mut(i) = self.upper.nth(i);
-        return max_inline(
-            self.corners(other, corner, i + 1),
-            self.corners(other, pair, i + 1));
+    }
+}
+
+impl<P> Iterator for CornerIterator<P>
+where
+    P: Point,
+{
+    type Item = P;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx & (1 << P::DIMENSIONS) != 0 {
+            None
+        } else {
+            let corner = P::generate(|i| if self.idx & (1 << i) != 0 {
+                self.upper.nth(i)
+            } else {
+                self.lower.nth(i)
+            });
+            self.idx += 1;
+            Some(corner)
+        }
     }
 }
 
@@ -186,13 +233,11 @@ where
         result - max_diff
     }
 
-    fn max_min_max_dist_2(&self, other: &Self) -> P::Scalar { // FIXME
-        // let merged = self.merged(other);
-        // let diag = merged.upper.sub(&merged.lower);
-        // diag.length_2()
-
-        let corner = self.lower.clone();
-        self.corners(other, corner, 0)
+    fn max_min_max_dist_2(&self, other: &Self) -> P::Scalar {
+        self.iter_corners()
+            .map(|corner| other.min_max_dist_2(&corner))
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or_else(|| std::cmp::Ordering::Equal))
+            .unwrap_or_else(P::Scalar::min_value)
     }
 
     fn center(&self) -> Self::Point {
