@@ -185,7 +185,7 @@ where
 {
     nearest_neighbor_inner(&node.children, query_point).map(|(node, _)| node)
 }
-    
+
 fn nearest_neighbor_inner<'a, T>(
     seed_nodes: impl IntoIterator<Item = impl std::borrow::Borrow<&'a RTreeNode<T>>>,
     query_point: <T::Envelope as Envelope>::Point,
@@ -273,7 +273,7 @@ pub struct NearestNeighbors<'a, 'b, T: PointDistance> {
 pub fn all_nearest_neighbors<'a, T>(
     target_node: &'a ParentNode<T>,
     query_node: &'a ParentNode<T>,
-) -> impl Iterator<Item=NearestNeighbors<'a, 'a, T>> + 'a 
+) -> impl Iterator<Item=NearestNeighbors<'a, 'a, T>> + 'a
 where
     T: PointDistance + 'a,
 {
@@ -350,7 +350,7 @@ where
                 }
             }
         }
-        
+
         None
     }
 }
@@ -472,7 +472,7 @@ mod test {
         for point in &points {
             tree_sequential.insert(*point);
         }
-        
+
         // Test that in identical trees, all-nearest-neighbors match the
         // identical node.
         for neighbors in super::all_nearest_neighbors(tree.root(), tree_sequential.root()) {
@@ -485,7 +485,7 @@ mod test {
         // For different trees, test that the all-nearest-neighbor results match
         // individual nearest neighbors.
         // From random testing, the large number of points is necessary to catch
-        //errors in the pruning algorithm.
+        // errors in the pruning algorithm.
         let sample_points = create_random_points(10_000, SEED_2);
         let sample_tree = RTree::bulk_load(sample_points.clone());
         for neighbors in super::all_nearest_neighbors(tree.root(), sample_tree.root()) {
