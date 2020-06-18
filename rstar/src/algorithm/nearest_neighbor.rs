@@ -252,7 +252,9 @@ where
     None
 }
 
-const PRELOAD_SIZE: usize = 16;
+/// The maximum number of subtrees to track when doing tree-to-tree
+/// all-nearest-neighbors.
+const MAX_AKNN_SUBTREES: usize = 16;
 
 /// A nearest neighbor pair with the squared euclidean distance between them.
 pub struct NearestNeighbors<'a, 'b, T: PointDistance> {
@@ -286,8 +288,8 @@ where
     /// Stack of subtrees of the target tree that are candidate nearest nodes
     /// for each depth of the current location in the query tree.
     stack: Vec<NeighborSubtrees<'a, T>>,
-    /// Queue of query nodes whose nearest neighbors or neighest neighbor covering
-    /// subtrees are to be found.
+    /// LIFO queue of query nodes whose nearest neighbors or neighest neighbor
+    /// covering subtrees are to be found in depth-first order.
     queue: Vec<(&'a RTreeNode<T>, usize)>,
 }
 
@@ -326,7 +328,8 @@ where
                     let (parent, child) = pair.split_at_mut(1);
                     child[0].child_subtrees(&parent[0], node);
 
-                    // Add children of the query node to the query queue.
+                    // Add children of the query node to the end of the LIFO queue
+                    // for depth-first traversal.
                     self.queue.extend(node.children().iter().map(|child| (child, depth + 1)));
                 },
                 RTreeNode::Leaf(ref leaf) => {
@@ -394,7 +397,7 @@ where
         query_node: &'a ParentNode<T>,
     ) {
         self.target_nodes.clear();
-        if parent.target_nodes.len() < PRELOAD_SIZE {
+        if parent.target_nodes.len() < MAX_AKNN_SUBTREES {
             // If the set of target subtrees is not too large, subdivide each
             // subtree into its children so they can be individually pruned
             // by distance to the query.

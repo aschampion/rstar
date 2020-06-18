@@ -237,7 +237,7 @@ where
         self.iter_corners()
             .map(|corner| other.min_max_dist_2(&corner))
             .max_by(|a, b| a.partial_cmp(b).unwrap_or_else(|| std::cmp::Ordering::Equal))
-            .unwrap_or_else(P::Scalar::min_value)
+            .unwrap_or_else(P::Scalar::zero)
     }
 
     fn center(&self) -> Self::Point {
