@@ -417,7 +417,7 @@ where
         // potential elements in the query node's envelope have a match with
         // the target subtree's envelope. Find the minimal such distance.
         let min_max_dist = self.target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
-            let dist = node.envelope().max_min_max_dist_2(&query_node.envelope);
+            let dist = query_node.envelope.max_min_max_dist_2(&node.envelope());
             min_inline(min_max_dist, dist)
         });
 
@@ -473,6 +473,8 @@ mod test {
             tree_sequential.insert(*point);
         }
         
+        // Test that in identical trees, all-nearest-neighbors match the
+        // identical node.
         for neighbors in super::all_nearest_neighbors(tree.root(), tree_sequential.root()) {
             assert_eq!(neighbors.query, neighbors.target);
             assert_eq!(neighbors.distance_2, 0.0);
@@ -480,8 +482,11 @@ mod test {
 
         assert_eq!(super::all_nearest_neighbors(tree.root(), tree_sequential.root()).count(), points.len());
 
-
-        let sample_points = create_random_points(100, SEED_2);
+        // For different trees, test that the all-nearest-neighbor results match
+        // individual nearest neighbors.
+        // From random testing, the large number of points is necessary to catch
+        //errors in the pruning algorithm.
+        let sample_points = create_random_points(10_000, SEED_2);
         let sample_tree = RTree::bulk_load(sample_points.clone());
         for neighbors in super::all_nearest_neighbors(tree.root(), sample_tree.root()) {
             let single_neighbor = tree.nearest_neighbor(neighbors.query);
