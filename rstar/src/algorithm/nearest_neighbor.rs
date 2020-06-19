@@ -13,6 +13,27 @@ where
     distance: <<T::Envelope as Envelope>::Point as Point>::Scalar,
 }
 
+impl<'a, T> std::borrow::Borrow<&'a RTreeNode<T>> for RTreeNodeDistanceWrapper<'a, T>
+where
+    T: PointDistance,
+{
+    fn borrow(&self) -> &&'a RTreeNode<T> {
+        &self.node
+    }
+}
+
+impl<'a, T> Clone for RTreeNodeDistanceWrapper<'a, T>
+where
+    T: PointDistance,
+{
+    fn clone(&self) -> Self {
+        Self {
+            node: self.node,
+            distance: self.distance.clone()
+        }
+    }
+}
+
 impl<'a, T> PartialEq for RTreeNodeDistanceWrapper<'a, T>
 where
     T: PointDistance,
@@ -339,7 +360,8 @@ where
                     let subtrees = &self.stack[depth];
 
                     return nearest_neighbor_inner(
-                        &subtrees.target_nodes,
+                        subtrees.target_nodes.iter().map(|RTreeNodeDistanceWrapper {node, ..}| node).collect::<Vec<_>>(),
+                        // &subtrees.target_nodes,
                         // FIXME: inelegant solution to recover leaf's point.
                         leaf.envelope().center()
                     ).map(|(target, distance_2)| NearestNeighbors {
@@ -362,7 +384,7 @@ where
 {
     /// Nodes comprising a subtree of the target tree that cover all potential
     /// neighest neighbor matches.
-    target_nodes: Vec<&'a RTreeNode<T>>,
+    target_nodes: BinaryHeap<RTreeNodeDistanceWrapper<'a, T>>,
 }
 
 impl<'a, T> NeighborSubtrees<'a, T>
@@ -371,7 +393,7 @@ where
 {
     fn empty() -> Self {
         Self {
-            target_nodes: vec![]
+            target_nodes: BinaryHeap::default()
         }
     }
 
@@ -379,13 +401,35 @@ where
         target_node: &'a ParentNode<T>,
         query_node: &'a ParentNode<T>,
     ) -> Self {
-        let target_nodes = target_node.children().iter().collect();
+        let target_nodes = target_node.children().iter()
+            .map(|child| RTreeNodeDistanceWrapper {node: child, distance: child.envelope().min_dist_2(&query_node.envelope())}).collect();
         let preroot = Self {
             target_nodes,
         };
         let mut root = Self::empty();
         root.child_subtrees(&preroot, query_node);
         root
+    }
+
+    fn pop_expand(
+        &mut self,
+        query_node: &'a ParentNode<T>,
+    ) {
+        if self.target_nodes.len() < MAX_AKNN_SUBTREES {
+            // If the set of target subtrees is not too large, subdivide each
+            // subtree into its children so they can be individually pruned
+            // by distance to the query.
+            match self.target_nodes.pop() {
+                Some(RTreeNodeDistanceWrapper{ node: RTreeNode::Parent(ref parent), ..}) => 
+                    self.target_nodes.extend(parent.children.iter().map(|node| 
+                        RTreeNodeDistanceWrapper { node, distance: node.envelope().min_dist_2(&query_node.envelope())})),
+                Some(leaf @ RTreeNodeDistanceWrapper{ node: RTreeNode::Leaf(..), ..}) => {
+                    self.pop_expand(query_node);
+                    self.target_nodes.push(leaf);
+                },
+                None => {},
+            }
+        }
     }
 
     /// Replace the contents of this subtree with subtrees of `parent`'s target
@@ -397,36 +441,31 @@ where
         query_node: &'a ParentNode<T>,
     ) {
         self.target_nodes.clear();
-        if parent.target_nodes.len() < MAX_AKNN_SUBTREES {
-            // If the set of target subtrees is not too large, subdivide each
-            // subtree into its children so they can be individually pruned
-            // by distance to the query.
-            parent.target_nodes.iter().for_each(|node| {
-                match *node {
-                    RTreeNode::Parent(ref parent) => self.target_nodes.extend(&parent.children),
-                    leaf @ RTreeNode::Leaf(..) => self.target_nodes.push(leaf),
-                }
-            });
-        } else {
-            // If the set of target subtrees is already large, retain it rather
-            // than further subdividing.
-            self.target_nodes.extend(&parent.target_nodes);
-        };
+        self.target_nodes.extend(parent.target_nodes.iter().map(|RTreeNodeDistanceWrapper {node, ..}| 
+            RTreeNodeDistanceWrapper { node, distance: node.envelope().min_dist_2(&query_node.envelope())}));
+
+        self.pop_expand(query_node);
 
         // For each target subtree, find the distance which guarantees any
         // potential elements in the query node's envelope have a match with
         // the target subtree's envelope. Find the minimal such distance.
         let min_max_dist = self.target_nodes.iter().fold(Bounded::max_value(), |min_max_dist, node| {
-            let dist = query_node.envelope.max_min_max_dist_2(&node.envelope());
-            min_inline(min_max_dist, dist)
+            if node.distance < min_max_dist {
+                let dist = query_node.envelope.max_min_max_dist_2(&node.node.envelope());
+                min_inline(min_max_dist, dist)
+            } else {
+                min_max_dist
+            }
         });
 
         // Only retain subtrees that potentially have a match with the query
         // node nearer than the min max distance computed above.
-        self.target_nodes.retain(|node| {
-            let distance = node.envelope().min_dist_2(&query_node.envelope);
-            distance <= min_max_dist
-        });
+        let targ: Vec<_> = self.target_nodes.drain().filter(|node| node.distance < min_max_dist).collect();
+        // self.target_nodes.retain(|node| {
+        //     let distance = node.envelope().min_dist_2(&query_node.envelope);
+        //     distance <= min_max_dist
+        // });
+        self.target_nodes.extend(targ);
     }
 }
 
