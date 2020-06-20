@@ -93,7 +93,7 @@ fn tree_creation_quality(c: &mut Criterion) {
     });
 }
 
-fn all_to_all_neighbors(c: &mut Criterion) {
+fn all_to_all_neighbors_2d(c: &mut Criterion) {
     const SIZE: usize = 1_000;
     let points: Vec<_> = create_random_points(SIZE, SEED_1);
     let tree_target = RTree::<_, Params>::bulk_load_with_params(points.clone());
@@ -101,12 +101,34 @@ fn all_to_all_neighbors(c: &mut Criterion) {
     let tree_query = RTree::<_, Params>::bulk_load_with_params(query_points.clone());
 
     let tree_target_cloned = tree_target.clone();
-    c.bench_function("all to all tree lookup", move |b| {
+    c.bench_function("2d all to all tree lookup", move |b| {
         b.iter(|| {
             tree_target.all_nearest_neighbors(&tree_query).count();
         });
     })
-    .bench_function("all to all point lookup", move |b| {
+    .bench_function("2d all to all point lookup", move |b| {
+        b.iter(|| {
+            for query_point in &query_points {
+                tree_target_cloned.nearest_neighbor(&query_point).unwrap();
+            }
+        });
+    });
+}
+
+fn all_to_all_neighbors_3d(c: &mut Criterion) {
+    const SIZE: usize = 1_000;
+    let points: Vec<_> = create_random_points_3d(SIZE, SEED_1);
+    let tree_target = RTree::<_, Params>::bulk_load_with_params(points.clone());
+    let query_points = create_random_points_3d(SIZE, SEED_2);
+    let tree_query = RTree::<_, Params>::bulk_load_with_params(query_points.clone());
+
+    let tree_target_cloned = tree_target.clone();
+    c.bench_function("3d all to all tree lookup", move |b| {
+        b.iter(|| {
+            tree_target.all_nearest_neighbors(&tree_query).count();
+        });
+    })
+    .bench_function("3d all to all point lookup", move |b| {
         b.iter(|| {
             for query_point in &query_points {
                 tree_target_cloned.nearest_neighbor(&query_point).unwrap();
@@ -138,17 +160,27 @@ criterion_group!(
     bulk_load_baseline,
     bulk_load_comparison,
     tree_creation_quality,
-    all_to_all_neighbors,
+    all_to_all_neighbors_2d,
+    all_to_all_neighbors_3d,
     locate_successful,
     locate_unsuccessful
 );
 criterion_main!(benches);
 
-fn create_random_points(num_points: usize, seed: &[u8; 32]) -> Vec<[f64; 2]> {
+fn create_random<T>(num_points: usize, seed: &[u8; 32]) -> Vec<T>
+where rand::distributions::Standard: rand::distributions::Distribution<T> {
     let mut result = Vec::with_capacity(num_points);
     let mut rng = Hc128Rng::from_seed(*seed);
     for _ in 0..num_points {
         result.push(rng.gen());
     }
     result
+}
+
+fn create_random_points(num_points: usize, seed: &[u8; 32]) -> Vec<[f64; 2]> {
+    create_random(num_points, seed)
+}
+
+fn create_random_points_3d(num_points: usize, seed: &[u8; 32]) -> Vec<[f64; 3]> {
+    create_random(num_points, seed)
 }
