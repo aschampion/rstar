@@ -52,6 +52,18 @@ pub trait Envelope: Clone + Copy + PartialEq + ::std::fmt::Debug {
     /// that distance.
     ///
     /// Note that this is not necessarily symmetric.
+    ///
+    /// # Example
+    /// ```
+    /// use rstar::{AABB, Envelope};
+    ///
+    /// let a = AABB::from_corners([0.5, 5.0], [4.0, 7.0]);
+    /// let b = AABB::from_corners([2.0, 0.0], [4.0, 5.5]);
+    /// // From the top left corner of A to the top right corner of B.
+    /// assert_eq!(a.max_min_max_dist_2(&b), (4.0_f32 - 0.5).powi(2) + (7.0_f32 - 5.5).powi(2));
+    /// // From the bottom right corner of B to the bottom left corner of A.
+    /// assert_eq!(b.max_min_max_dist_2(&a), (4.0_f32 - 0.5).powi(2) + (0.0_f32 - 5.0).powi(2));
+    /// ```
     fn max_min_max_dist_2(&self, other: &Self) -> <Self::Point as Point>::Scalar;
 
     /// Returns the envelope's center point.
