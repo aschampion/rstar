@@ -25,13 +25,22 @@ pub fn create_random_integers<P: Point<Scalar = i32>>(num_points: usize, seed: &
     result
 }
 
-pub fn create_random_points(num_points: usize, seed: &Seed) -> Vec<[f64; 2]> {
+fn create_random<T>(num_points: usize, seed: &[u8; 32]) -> Vec<T>
+where rand::distributions::Standard: rand::distributions::Distribution<T> {
     let mut result = Vec::with_capacity(num_points);
     let mut rng = Hc128Rng::from_seed(*seed);
     for _ in 0..num_points {
         result.push(rng.gen());
     }
     result
+}
+
+pub fn create_random_points(num_points: usize, seed: &[u8; 32]) -> Vec<[f64; 2]> {
+    create_random(num_points, seed)
+}
+
+pub fn create_random_points_3d(num_points: usize, seed: &[u8; 32]) -> Vec<[f64; 3]> {
+    create_random(num_points, seed)
 }
 
 pub fn create_random_lines(num_lines: usize, seed: &Seed) -> Vec<Line<[f64; 2]>> {

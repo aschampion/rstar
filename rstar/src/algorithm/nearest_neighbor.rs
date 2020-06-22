@@ -504,7 +504,7 @@ mod test {
 
     #[test]
     fn test_all_nearest_neighbors() {
-        let points = create_random_points(1_000, SEED_1);
+        let points = create_random_points_3d(1_000, SEED_1);
         let tree = RTree::bulk_load(points.clone());
 
         let mut tree_sequential = RTree::new();
@@ -525,11 +525,18 @@ mod test {
         // individual nearest neighbors.
         // From random testing, the large number of points is necessary to catch
         // errors in the pruning algorithm.
-        let sample_points = create_random_points(10_000, SEED_2);
+        let sample_points = create_random_points_3d(1000_000, SEED_2);
         let sample_tree = RTree::bulk_load(sample_points.clone());
+        // tree.root().sanity_check::<crate::params::DefaultParams>().unwrap();
         for neighbors in super::all_nearest_neighbors(tree.root(), sample_tree.root()) {
             let single_neighbor = tree.nearest_neighbor(neighbors.query);
+            if single_neighbor != Some(neighbors.target) {
+                use crate::{Envelope, RTreeObject};
+                // dbg!(neighbors.query, neighbors.query.envelope().center());
+                // dbg!(neighbors.distance_2, single_neighbor.unwrap().distance_2(neighbors.query), neighbors.target.distance_2(neighbors.query));
+            }
             assert_eq!(Some(neighbors.target), single_neighbor);
+            assert_eq!(neighbors.distance_2, single_neighbor.unwrap().distance_2(neighbors.query))
         }
     }
 
